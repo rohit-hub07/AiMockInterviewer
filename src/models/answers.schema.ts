@@ -1,7 +1,12 @@
 import mongoose, { Schema } from "mongoose";
 
+interface IAnswers{
+  id: number;
+  answer: string;
+}
+
 interface IAnswer extends Document{
-  answers: string[];
+  answers: IAnswer[];
   userId: Schema.Types.ObjectId;
   createdAt: Date;
   updatedAt: Date;
@@ -10,7 +15,10 @@ interface IAnswer extends Document{
 const answerSchema = new mongoose.Schema<IAnswer>({
   answers: [
     {
-      type: String,
+     id:{
+      type: Number
+     },
+     answer: String,
     },
   ],
   userId: {

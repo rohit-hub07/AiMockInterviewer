@@ -41,6 +41,8 @@ export const uploadFile = async (req: Request, res: Response) => {
       return res.status(400).json({ message: "Generated questions are not in list form", success: false });
     }
 
+    console.log("Parsed object: ",parsedQuestions);
+
     const questionObjects = parsedQuestions
       .map((q: any, idx: number) => ({
         id: typeof q.id === "number" ? q.id : idx + 1,
