@@ -1,13 +1,14 @@
 import mongoose, { Schema } from "mongoose";
 
-interface IAnswers{
+interface IAnswer {
   id: number;
   answer: string;
 }
 
-interface IAnswer extends Document{
+interface IAnswer extends Document {
   answers: IAnswer[];
   userId: Schema.Types.ObjectId;
+  interviewId: Schema.Types.ObjectId;
   createdAt: Date;
   updatedAt: Date;
 }
@@ -15,18 +16,22 @@ interface IAnswer extends Document{
 const answerSchema = new mongoose.Schema<IAnswer>({
   answers: [
     {
-     id:{
-      type: Number
-     },
-     answer: String,
+      id: {
+        type: Number
+      },
+      answer: String,
     },
   ],
   userId: {
     type: Schema.Types.ObjectId,
     ref: "User",
+  },
+  interviewId: {
+    type: Schema.Types.ObjectId,
+    ref: "InterviewSession"
   }
-}, {timestamps: true})
+}, { timestamps: true })
 
-const Answer = mongoose.models.answers || mongoose.model<IAnswer>("answers", answerSchema);
+const Answer = mongoose.models.Answer || mongoose.model<IAnswer>("Answer", answerSchema);
 
 export default Answer;

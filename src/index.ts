@@ -6,6 +6,8 @@ import fileRoutes from "./routes/file.route.js";
 import { dbConnection } from "./db/dbConnection.js";
 import answerRouter from "./routes/answers.routes.js";
 import interviewSession from "./routes/createSession.routes..js";
+import questionRouter from "./routes/question.route.js";
+import feedbackRoute from "./routes/feedback.route.js";
 dotenv.config();
 
 const app = express();
@@ -16,10 +18,12 @@ app.use(express.json());
 app.use(express.urlencoded({extended: true}));
 app.use(cookieParser());
 
+app.use("/", feedbackRoute);
 app.use("/user",userRouter);
 app.use("/files", fileRoutes);
 app.use("/answer", answerRouter);
 app.use("/", interviewSession);
+app.use("/question", questionRouter);
 
 app.get("/health", (req,res) =>{
   res.send("This health route is working!")

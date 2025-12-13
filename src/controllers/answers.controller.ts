@@ -3,18 +3,19 @@ import Answer from "../models/answers.schema.js";
 export const answersController = async (req: Request, res: Response) => {
   try {
     //here user answer is an array of objects
-    const { userAnswer } = req.body;
-    if (!userAnswer) {
+    const { userAnswer, interviewId } = req.body;
+    console.log("useranswer: ", userAnswer )
+    if (!userAnswer || !interviewId) {
       return res.status(404).json({
-        message: "User answer not found!",
+        message: "User answer or Interview id not found!",
         success: false,
       })
     }
-    const updatedUserAnswers = userAnswer.map((ans: any, idx: number) => ({
-      id: typeof ans.id === "number" ? ans.id : idx+1,
-      answer: ans.answer ?? ans.answers ?? "",
-    }))
-    console.log("User answers: ", updatedUserAnswers);
+    // const updatedUserAnswers = userAnswer.map((ans: any, idx: number) => ({
+    //   id: typeof ans.id === "number" ? ans.id : idx+1,
+    //   answer: ans.answer ?? ans.answers ?? "",
+    // }))
+    // console.log("User answers: ", updatedUserAnswers);
     const userId = req.userId;
     if (!userId) {
       return res.status(404).json({
@@ -23,8 +24,9 @@ export const answersController = async (req: Request, res: Response) => {
       })
     }
     const answer = await Answer.create({
-      answer: updatedUserAnswers,
-      userId: userId
+      answers: userAnswer,
+      userId: userId,
+      interviewId: interviewId,
     })
     if (!answer) {
       return res.status(500).json({
@@ -35,6 +37,7 @@ export const answersController = async (req: Request, res: Response) => {
     return res.status(200).json({
       message: "Answers stored successfully",
       success: true,
+      userAnswer: answer,
     })
 
   } catch (error: any) {

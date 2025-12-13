@@ -3,7 +3,7 @@ import fs from "fs";
 import { extractTextFromFile } from "../services/file.services.js";
 import { cleanExtractedText } from "../utils/cleanText.js";
 import { generateQues } from "../utils/generateQuestions.js";
-import Question from "../models/question.model.js";
+
 
 export const uploadFile = async (req: Request, res: Response) => {
   try {
@@ -54,21 +54,21 @@ export const uploadFile = async (req: Request, res: Response) => {
       return res.status(400).json({ message: "No valid questions generated", success: false });
     }
 
-    const createdQuestions = await Question.create({
-      questions: questionObjects,
-      userId: req.userId,
-    })
+    // const createdQuestions = await Question.create({
+    //   questions: questionObjects,
+    //   userId: req.userId,
+    // })
     
-    if (!createdQuestions) {
-      return res.status(500).json({
-        message: "Error creating questions",
-        success: false,
-      })
-    }
+    // if (!createdQuestions) {
+    //   return res.status(500).json({
+    //     message: "Error creating questions",
+    //     success: false,
+    //   })
+    // }
 
     // return res.status(200).json({ extractedText: cleanedText });
 
-    return res.status(200).json({ message: "Question created successfully", success: true, questions: createdQuestions });
+    return res.status(200).json({ message: "Question created successfully", success: true, questionsObject:questionObjects });
 
   } catch (error: any) {
     res.status(500).json({ message: error.message || "Something went wrong" });
