@@ -16,14 +16,14 @@ export const feedBackController = async (req: Request, res: Response) => {
         success: false,
       })
     }
-    const answers = await Answer.findOne({ interviewId: interviewId } as string);
+    const answers = await Answer.findOne({ interviewId: interviewId } as any);
 
     console.log("answers from feedback controller: ", answers);
 
     if (!answers) {
       return res.status(500).json({ message: "Can't find the user answers!", success: false })
     }
-    const questions = await Question.findOne({ interviewId: interviewId } as string)
+    const questions = await Question.findOne({ interviewId } as any)
 
     console.log("Questions inside of the feedback controller: ", questions)
 
