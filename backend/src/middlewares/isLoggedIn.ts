@@ -8,7 +8,7 @@ export const isLoggedIn = async (req: Request, res: Response, next: NextFunction
   try {
     const token = req.cookies?.token;
     if (!token) {
-      return res.status(404).json({
+      return res.status(401).json({
         message: "Please login!",
         success: false,
       })
@@ -20,8 +20,8 @@ export const isLoggedIn = async (req: Request, res: Response, next: NextFunction
     next();
   } catch (error: any) {
     console.log("Error inside of the isLoggedIn: ", error.message);
-    return res.status(500).json({
-      message: "Something went wrong!",
+    return res.status(401).json({
+      message: "Invalid or expired token",
       success: false,
     })
   }

@@ -69,7 +69,7 @@ export const registerUser = async (req: Request, res: Response) => {
       httpOnly: true,
       secure: process.env.NODE_ENV === "production",
       sameSite: "lax" as const,
-      maxAge: 24 * 60 * 60 * 3
+      maxAge: 3 * 24 * 60 * 60 * 1000 
     }
     //store user detail in the cookies
     res.cookie("token", token, cookieOptions);
@@ -144,7 +144,7 @@ export const loginController = async (req: Request, res: Response) => {
       httpOnly: true,
       secure: process.env.NODE_ENV === "production",
       sameSite: "lax" as const,
-      maxAge: 24 * 60 * 60 * 3
+      maxAge: 3 * 24 * 60 * 60 * 1000
     }
     //store user detail in the cookies
     res.cookie("token", token, cookieOptions);
@@ -177,5 +177,40 @@ export const logoutController = async (req: Request, res: Response) => {
       message: "Something went wrong!",
       success: false,
     })
+  }
+}
+
+export const getCurrentUser = async (req: Request, res: Response) => {
+  try {
+    // isLoggedIn middleware already verified the JWT and attached userId
+    const userId = req.userId;
+
+    if (!userId) {
+      return res.status(401).json({
+        message: "Unauthorized",
+        success: false,
+      });
+    }
+
+    const user = await User.findById(userId).select('-password');
+
+    if (!user) {
+      return res.status(404).json({
+        message: "User not found",
+        success: false,
+      });
+    }
+
+    return res.status(200).json({
+      message: "User fetched successfully",
+      success: true,
+      user: user,
+    });
+  } catch (error: any) {
+    console.log("Error in getCurrentUser: ", error.message);
+    return res.status(500).json({
+      message: "Something went wrong!",
+      success: false,
+    });
   }
 }
