@@ -25,3 +25,27 @@ api.interceptors.response.use(
 );
 
 export default api;
+
+/**
+ * Fetch user's interview history
+ */
+export const getUserInterviews = async () => {
+  const response = await api.get('/interviews/user');
+  return response.data;
+};
+
+/**
+ * Fetch feedback for a specific interview
+ */
+export const getInterviewFeedback = async (interviewId: string) => {
+  const response = await api.get(`/feedback/${interviewId}`);
+  return response.data;
+};
+
+/**
+ * Generate feedback for an interview
+ */
+export const generateFeedback = async (interviewId: string) => {
+  const response = await api.post('/feedback', { interviewId });
+  return response.data;
+};

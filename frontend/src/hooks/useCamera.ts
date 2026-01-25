@@ -7,6 +7,7 @@ interface UseCameraResult {
   hasPermission: boolean;
   requestPermission: () => Promise<void>;
   stopCamera: () => void;
+  isStreamActive: () => boolean;
 }
 
 /**
@@ -26,6 +27,7 @@ export const useCamera = (): UseCameraResult => {
     setError(null);
 
     try {
+      console.log('Requesting camera and microphone permission...');
       const mediaStream = await navigator.mediaDevices.getUserMedia({
         video: {
           width: { ideal: 1280 },
@@ -39,10 +41,15 @@ export const useCamera = (): UseCameraResult => {
         },
       });
 
+      console.log('Permission granted! Stream obtained:', mediaStream);
+      console.log('Video tracks:', mediaStream.getVideoTracks());
+      console.log('Audio tracks:', mediaStream.getAudioTracks());
+
       streamRef.current = mediaStream;
       setStream(mediaStream);
       setHasPermission(true);
       setError(null);
+      console.log('hasPermission set to true');
     } catch (err) {
       const error = err as Error;
       console.error('Camera permission error:', error);
@@ -70,6 +77,20 @@ export const useCamera = (): UseCameraResult => {
     }
   }, []);
 
+  const isStreamActive = useCallback(() => {
+    if (!streamRef.current) return false;
+
+    const videoTrack = streamRef.current.getVideoTracks()[0];
+    const audioTrack = streamRef.current.getAudioTracks()[0];
+
+    return !!(
+      videoTrack &&
+      audioTrack &&
+      videoTrack.readyState === 'live' &&
+      audioTrack.readyState === 'live'
+    );
+  }, []);
+
   // Cleanup on unmount
   useEffect(() => {
     return () => {
@@ -84,5 +105,6 @@ export const useCamera = (): UseCameraResult => {
     hasPermission,
     requestPermission,
     stopCamera,
+    isStreamActive,
   };
 };

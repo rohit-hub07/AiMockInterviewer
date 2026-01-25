@@ -1,16 +1,17 @@
 import mongoose, { Schema } from "mongoose";
 
-interface QTypes{
+interface QTypes {
   id: string;
   question: string
 }
 
-interface ATypes{
+interface ATypes {
   id: string;
   answer: string
 }
 
 interface IFeedback extends Document {
+  interviewId: Schema.Types.ObjectId;
   questions: QTypes[];
   userAnswers: ATypes[];
   createdAt: Date;
@@ -18,6 +19,11 @@ interface IFeedback extends Document {
 }
 
 const feedbackSchema = new mongoose.Schema<IFeedback>({
+  interviewId: {
+    type: Schema.Types.ObjectId,
+    ref: "sessions",
+    required: true,
+  },
   questions: [
     {
       id: { type: Number, required: true },

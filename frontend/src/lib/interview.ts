@@ -50,6 +50,41 @@ export const uploadAnswerVideo = async (
 };
 
 /**
+ * Upload multiple answers at once (batch upload)
+ */
+export const uploadAllAnswers = async (
+  interviewId: string,
+  answers: Array<{
+    questionId: string;
+    questionNumber: number;
+    videoBlob: Blob | null;
+  }>
+): Promise<void> => {
+  const formData = new FormData();
+  formData.append('interviewId', interviewId);
+
+  // Add all video blobs to FormData
+  answers.forEach((answer) => {
+    if (answer.videoBlob) {
+      formData.append(`video_${answer.questionNumber}`, answer.videoBlob, `answer-${answer.questionNumber}.webm`);
+      formData.append(`questionId_${answer.questionNumber}`, answer.questionId);
+    } else {
+      // Mark as empty/skipped answer
+      formData.append(`empty_${answer.questionNumber}`, 'true');
+      formData.append(`questionId_${answer.questionNumber}`, answer.questionId);
+    }
+  });
+
+  formData.append('totalAnswers', answers.length.toString());
+
+  await api.post('/answers/batch', formData, {
+    headers: {
+      'Content-Type': 'multipart/form-data',
+    },
+  });
+};
+
+/**
  * Text-to-speech: Convert question text to audio
  * Uses browser's native SpeechSynthesis API
  */
@@ -60,13 +95,23 @@ export const speakQuestion = (text: string): Promise<void> => {
       return;
     }
 
+    // Cancel any ongoing speech first to prevent interruption errors
+    window.speechSynthesis.cancel();
+
     const utterance = new SpeechSynthesisUtterance(text);
     utterance.rate = 0.9;
     utterance.pitch = 1;
     utterance.volume = 1;
 
     utterance.onend = () => resolve();
-    utterance.onerror = (error) => reject(error);
+    utterance.onerror = (event) => {
+      // Don't reject on 'interrupted' errors as they're expected when skipping
+      if (event.error === 'interrupted' || event.error === 'canceled') {
+        resolve();
+      } else {
+        reject(new Error(`Speech synthesis error: ${event.error}`));
+      }
+    };
 
     window.speechSynthesis.speak(utterance);
   });

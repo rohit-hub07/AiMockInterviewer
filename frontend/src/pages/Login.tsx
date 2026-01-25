@@ -12,12 +12,8 @@ const Login = () => {
 
   const handleSubmit = async (e: React.FormEvent) => {
     e.preventDefault();
-    try {
-      await login(email, password);
-      navigate('/dashboard');
-    } catch (error) {
-      // Error handling is done in AuthContext with toast
-    }
+    await login(email, password);
+    navigate('/dashboard');
   };
 
   return (

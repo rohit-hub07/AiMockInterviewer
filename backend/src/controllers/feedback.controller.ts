@@ -10,7 +10,7 @@ export const feedBackController = async (req: Request, res: Response) => {
   try {
     const { interviewId } = req.body;
     const userId = req.userId;
-    if (!interviewId || userId) {
+    if (!interviewId || !userId) {
       return res.status(404).json({
         message: "Interview id or user id is not found!",
         success: false,
@@ -32,6 +32,7 @@ export const feedBackController = async (req: Request, res: Response) => {
     }
 
     const feedBack = await Feedback.create({
+      interviewId: interviewId,
       questions: questions?.questions,
       userAnswers: answers?.answers
     });
@@ -43,7 +44,7 @@ export const feedBackController = async (req: Request, res: Response) => {
     const cleanedFeedback = cleanedText.replace(/```json/g, '')
       .replace(/```/g, '')
       .trim();
-    console.log("Feedback: ",cleanedFeedback);
+    console.log("Feedback: ", cleanedFeedback);
     let parsed: any;
     try {
       parsed = JSON.parse(cleanedFeedback);
@@ -61,5 +62,43 @@ export const feedBackController = async (req: Request, res: Response) => {
   } catch (error: any) {
     console.log("Error inside of the feedback controller: ", error.message);
     return res.status(500).json({ message: error.message || "Something went wrong!", success: false })
+  }
+}
+
+export const getFeedback = async (req: Request, res: Response) => {
+  try {
+    const { interviewId } = req.params;
+    const userId = req.userId;
+
+    if (!interviewId) {
+      return res.status(404).json({
+        message: "Interview id not found!",
+        success: false,
+      });
+    }
+
+    // Find feedback for this interview
+    const feedback = await Feedback.findOne({ interviewId } as any);
+
+    if (!feedback) {
+      return res.status(404).json({
+        message: "No feedback found for this interview",
+        success: false,
+      });
+    }
+
+    return res.status(200).json({
+      success: true,
+      id: feedback._id.toString(),
+      questions: feedback.questions,
+      userAnswers: feedback.userAnswers,
+      createdAt: (feedback as any).createdAt,
+    });
+  } catch (error: any) {
+    console.log("Error fetching feedback: ", error.message);
+    return res.status(500).json({
+      message: error.message || "Something went wrong!",
+      success: false
+    });
   }
 } 

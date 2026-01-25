@@ -48,7 +48,7 @@ app.use("/", feedbackRoute);
 app.use("/user", userRouter);
 app.use("/files", fileRoutes);
 app.use("/answer", answerRouter);
-app.use("/", interviewSession);
+app.use("/interviews", interviewSession);
 app.use("/question", questionRouter);
 
 app.get("/health", (req, res) => {

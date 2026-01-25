@@ -14,6 +14,7 @@ import {
   stopSpeaking,
   uploadAnswerVideo,
 } from '../lib/interview';
+import { generateFeedback } from '../lib/api';
 import type { InterviewState, InterviewQuestion } from '../types';
 
 /**
@@ -48,6 +49,15 @@ const Interview = () => {
   const [currentQuestionIndex, setCurrentQuestionIndex] = useState(0);
   const [isAISpeaking, setIsAISpeaking] = useState(false);
   const [isUploading, setIsUploading] = useState(false);
+  const [showEndConfirmDialog, setShowEndConfirmDialog] = useState(false);
+  const [hasLoadedFirstQuestion, setHasLoadedFirstQuestion] = useState(false);
+
+  // Store all answers to upload at the end
+  const [collectedAnswers, setCollectedAnswers] = useState<Array<{
+    questionId: string;
+    questionNumber: number;
+    videoBlob: Blob | null;
+  }>>([]);
 
   /**
    * Initialize interview: Request camera permission
@@ -60,19 +70,63 @@ const Interview = () => {
    * Handle permission result
    */
   useEffect(() => {
+    console.log('Permission state changed:', { hasPermission, stream: !!stream, cameraError });
+
     if (cameraError) {
+      console.log('Setting state to permission-denied due to error:', cameraError);
       setInterviewState('permission-denied');
       toast.error(cameraError);
-    } else if (hasPermission && stream) {
+    } else if (hasPermission && stream && !hasLoadedFirstQuestion) {
+      console.log('Permission granted and stream available, loading question');
+      setHasLoadedFirstQuestion(true);
       setInterviewState('loading-question');
       loadQuestion(0);
     }
-  }, [hasPermission, stream, cameraError]);
+  }, [hasPermission, stream, cameraError, hasLoadedFirstQuestion]);
+
+  /**
+   * Start recording the user's answer
+   */
+  const startRecordingAnswer = useCallback(() => {
+    console.log('startRecordingAnswer called, stream:', stream);
+
+    if (!stream) {
+      console.error('Stream is null/undefined in startRecordingAnswer!');
+      toast.error('Camera not available. Please allow camera access.');
+      setInterviewState('permission-denied');
+      return;
+    }
+
+    // Verify stream is still active
+    const videoTrack = stream.getVideoTracks()[0];
+    const audioTrack = stream.getAudioTracks()[0];
+
+    console.log('Video track:', videoTrack, 'readyState:', videoTrack?.readyState);
+    console.log('Audio track:', audioTrack, 'readyState:', audioTrack?.readyState);
+
+    if (!videoTrack || !audioTrack || videoTrack.readyState !== 'live' || audioTrack.readyState !== 'live') {
+      console.error('Tracks not live! Video:', videoTrack?.readyState, 'Audio:', audioTrack?.readyState);
+      toast.error('Camera or microphone is not available. Please refresh and try again.');
+      setInterviewState('permission-denied');
+      return;
+    }
+
+    console.log('Starting recording with stream...');
+    setInterviewState('recording');
+    startRecording(stream);
+    toast.success('Recording started. Answer the question!');
+  }, [stream, startRecording]);
 
   /**
    * Load and play a question
    */
   const loadQuestion = useCallback(async (questionIndex: number) => {
+    console.log('loadQuestion called for index:', questionIndex, 'stream available:', !!stream);
+
+    // Cancel any ongoing speech first
+    stopSpeaking();
+    setIsAISpeaking(false);
+
     setInterviewState('loading-question');
 
     const question = getQuestionByIndex(questionIndex);
@@ -94,33 +148,24 @@ const Interview = () => {
     setIsAISpeaking(true);
 
     try {
+      console.log('Speaking question:', question.questionText);
       await speakQuestion(question.questionText);
+      console.log('Question spoken, starting recording...');
       setIsAISpeaking(false);
 
       // Start recording after AI finishes speaking
       startRecordingAnswer();
     } catch (error) {
       console.error('TTS error:', error);
-      toast.error('Failed to play question audio');
+      // Only show error if it's not an interruption
+      if (error instanceof Error && !error.message.includes('interrupted')) {
+        toast.error('Failed to play question audio');
+      }
       setIsAISpeaking(false);
       // Still allow recording even if TTS fails
       startRecordingAnswer();
     }
-  }, []);
-
-  /**
-   * Start recording the user's answer
-   */
-  const startRecordingAnswer = useCallback(() => {
-    if (!stream) {
-      toast.error('Camera not available');
-      return;
-    }
-
-    setInterviewState('recording');
-    startRecording(stream);
-    toast.success('Recording started. Answer the question!');
-  }, [stream, startRecording]);
+  }, [stream, startRecordingAnswer]);
 
   /**
    * Handle "Next Question" button click
@@ -135,57 +180,142 @@ const Interview = () => {
   }, [isRecording, stopRecording]);
 
   /**
-   * Upload recorded answer and move to next question
+   * Save answer to collection and move to next question
+   */
+  const saveAnswerAndProceed = useCallback((blob: Blob | null) => {
+    if (!currentQuestion) return;
+
+    console.log('Saving answer for question', currentQuestionIndex + 1, 'blob:', !!blob);
+
+    // Add answer to collection (even if null/empty)
+    setCollectedAnswers(prev => [...prev, {
+      questionId: currentQuestion.id,
+      questionNumber: currentQuestion.questionNumber,
+      videoBlob: blob,
+    }]);
+
+    if (blob) {
+      toast.success(`Answer ${currentQuestionIndex + 1} saved!`);
+    } else {
+      toast('Answer skipped (no recording)', { icon: '⏭️' });
+    }
+
+    // Reset recording state
+    resetRecording();
+
+    // Move to next question
+    const nextIndex = currentQuestionIndex + 1;
+    loadQuestion(nextIndex);
+  }, [currentQuestion, currentQuestionIndex, resetRecording]);
+
+  /**
+   * Handle skip question
+   */
+  const handleSkipQuestion = useCallback(() => {
+    if (!currentQuestion) return;
+
+    // Stop any ongoing recording
+    if (isRecording) {
+      stopRecording();
+    }
+
+    // Stop AI speaking
+    stopSpeaking();
+    setIsAISpeaking(false);
+
+    // Save empty answer for this question
+    saveAnswerAndProceed(null);
+  }, [currentQuestion, isRecording, stopRecording, saveAnswerAndProceed]);
+
+  /**
+   * Handle end interview early
+   */
+  const handleEndInterview = useCallback(() => {
+    // Stop any ongoing recording
+    if (isRecording) {
+      stopRecording();
+    }
+
+    // Stop AI speaking
+    stopSpeaking();
+    setIsAISpeaking(false);
+
+    completeInterview();
+  }, [isRecording, stopRecording]);
+
+  /**
+   * Save recorded answer and move to next question
    */
   useEffect(() => {
     if (recordedBlob && interviewState === 'processing') {
-      uploadAndProceed();
+      saveAnswerAndProceed(recordedBlob);
     }
-  }, [recordedBlob, interviewState]);
-
-  const uploadAndProceed = async () => {
-    if (!recordedBlob || !currentQuestion) return;
-
-    setIsUploading(true);
-    const interviewId = sessionStorage.getItem('currentInterviewId') || 'temp-id';
-
-    try {
-      await uploadAnswerVideo(
-        interviewId,
-        currentQuestion.id,
-        recordedBlob,
-        currentQuestion.questionNumber
-      );
-
-      toast.success('Answer uploaded successfully!');
-
-      // Reset recording state
-      resetRecording();
-
-      // Move to next question
-      const nextIndex = currentQuestionIndex + 1;
-      loadQuestion(nextIndex);
-    } catch (error) {
-      console.error('Upload error:', error);
-      toast.error('Failed to upload answer. Please try again.');
-      setInterviewState('recording');
-    } finally {
-      setIsUploading(false);
-    }
-  };
+  }, [recordedBlob, interviewState, saveAnswerAndProceed]);
 
   /**
-   * Complete the interview
+   * Complete the interview and upload all answers
    */
   const completeInterview = async () => {
     setInterviewState('completed');
     stopSpeaking();
 
-    toast.success('Interview completed! Great job!');
+    console.log('Interview complete! Total answers collected:', collectedAnswers.length);
 
-    // Wait a bit before redirecting
-    await new Promise(resolve => setTimeout(resolve, 2000));
-    navigate('/dashboard');
+    const answeredCount = collectedAnswers.filter(a => a.videoBlob).length;
+    const skippedCount = collectedAnswers.length - answeredCount;
+
+    // Upload all answers
+    const interviewId = sessionStorage.getItem('currentInterviewId') || 'temp-id';
+
+    try {
+      setIsUploading(true);
+      toast.loading('Uploading your answers...');
+
+      // Upload each answer individually
+      for (const answer of collectedAnswers) {
+        if (answer.videoBlob) {
+          console.log(`Uploading answer ${answer.questionNumber}...`);
+          await uploadAnswerVideo(
+            interviewId,
+            answer.questionId,
+            answer.videoBlob,
+            answer.questionNumber
+          );
+        } else {
+          console.log(`Skipping upload for empty answer ${answer.questionNumber}`);
+        }
+      }
+
+      toast.dismiss();
+      toast.success(`Answers uploaded! ${answeredCount} answered, ${skippedCount} skipped`);
+
+      // Generate feedback
+      if (answeredCount > 0) {
+        toast.loading('Generating your feedback...');
+
+        try {
+          const feedbackResult = await generateFeedback(interviewId);
+          console.log('Feedback generated:', feedbackResult);
+          toast.dismiss();
+          toast.success('Feedback generated successfully!');
+        } catch (feedbackError) {
+          console.error('Failed to generate feedback:', feedbackError);
+          toast.dismiss();
+          toast.error('Failed to generate feedback, but your answers are saved.');
+        }
+      }
+
+      // Show completion summary
+      await new Promise(resolve => setTimeout(resolve, 1500));
+
+      // Navigate to dashboard
+      navigate('/dashboard');
+    } catch (error) {
+      console.error('Failed to upload answers:', error);
+      toast.dismiss();
+      toast.error('Failed to upload some answers. Please try again.');
+      setIsUploading(false);
+    }
   };
 
   /**
@@ -246,11 +376,24 @@ const Interview = () => {
             <p className="text-gray-400 max-w-md mx-auto">
               {cameraError || 'Camera and microphone access is required for the interview.'}
             </p>
+            {/* Debug info */}
+            <div className="text-xs text-gray-500 bg-gray-800/50 rounded p-3 max-w-md mx-auto">
+              <div>Has Permission: {hasPermission ? 'Yes' : 'No'}</div>
+              <div>Stream: {stream ? 'Active' : 'None'}</div>
+              <div>Loading: {cameraLoading ? 'Yes' : 'No'}</div>
+              <div>Error: {cameraError || 'None'}</div>
+            </div>
             <div className="flex gap-4 justify-center">
               <AnimatedButton variant="secondary" onClick={() => navigate('/dashboard')}>
                 Go Back
               </AnimatedButton>
-              <AnimatedButton variant="primary" onClick={requestPermission}>
+              <AnimatedButton
+                variant="primary"
+                onClick={() => {
+                  console.log('Manually requesting permission again...');
+                  requestPermission();
+                }}
+              >
                 Try Again
               </AnimatedButton>
             </div>
@@ -277,14 +420,37 @@ const Interview = () => {
 
             {/* Controls */}
             <div className="flex items-center justify-between">
-              <div className="text-sm text-gray-400">
+              <div className="flex gap-3">
+                {/* End Interview Button */}
+                {(isRecording || isAISpeaking) && !isUploading && (
+                  <AnimatedButton
+                    variant="secondary"
+                    onClick={() => setShowEndConfirmDialog(true)}
+                  >
+                    End Interview
+                  </AnimatedButton>
+                )}
+              </div>
+
+              <div className="flex-1 text-center text-sm text-gray-400">
                 {interviewState === 'processing' && 'Processing your answer...'}
                 {interviewState === 'recording' && 'Recording your answer...'}
                 {interviewState === 'ai-speaking' && 'Listen carefully to the question...'}
                 {interviewState === 'loading-question' && 'Loading next question...'}
               </div>
 
-              <div className="flex gap-4">
+              <div className="flex gap-3">
+                {/* Skip Question Button */}
+                {(isRecording || isAISpeaking) && !isUploading && (
+                  <AnimatedButton
+                    variant="secondary"
+                    onClick={handleSkipQuestion}
+                  >
+                    Skip Question
+                  </AnimatedButton>
+                )}
+
+                {/* Next Question Button */}
                 {isRecording && (
                   <AnimatedButton
                     variant="primary"
@@ -300,24 +466,57 @@ const Interview = () => {
         );
 
       case 'completed':
+        const answeredCount = collectedAnswers.filter(a => a.videoBlob).length;
+        const skippedCount = collectedAnswers.length - answeredCount;
+
         return (
           <motion.div
             initial={{ opacity: 0, scale: 0.9 }}
             animate={{ opacity: 1, scale: 1 }}
             className="text-center space-y-6"
           >
-            <div className="text-6xl mb-4">🎉</div>
-            <h2 className="text-3xl font-bold gradient-text">Interview Completed!</h2>
-            <p className="text-gray-400 max-w-md mx-auto">
-              Great job! Your answers have been recorded and will be reviewed shortly.
-            </p>
             <motion.div
-              animate={{ scale: [1, 1.1, 1] }}
-              transition={{ duration: 2, repeat: Infinity }}
-              className="text-5xl"
+              initial={{ scale: 0 }}
+              animate={{ scale: 1 }}
+              transition={{ type: 'spring', duration: 0.6 }}
+              className="text-6xl mb-4"
             >
-              ✓
+              🎉
             </motion.div>
+            <h2 className="text-3xl font-bold gradient-text">Interview Completed!</h2>
+
+            {/* Summary Stats */}
+            <div className="glass-effect rounded-2xl p-6 max-w-md mx-auto space-y-4">
+              <h3 className="text-xl font-semibold text-gray-300">Summary</h3>
+              <div className="grid grid-cols-2 gap-4">
+                <div className="bg-green-500/10 rounded-xl p-4">
+                  <p className="text-3xl font-bold text-green-400">{answeredCount}</p>
+                  <p className="text-sm text-gray-400">Answered</p>
+                </div>
+                <div className="bg-yellow-500/10 rounded-xl p-4">
+                  <p className="text-3xl font-bold text-yellow-400">{skippedCount}</p>
+                  <p className="text-sm text-gray-400">Skipped</p>
+                </div>
+              </div>
+              <div className="bg-purple-500/10 rounded-xl p-4">
+                <p className="text-3xl font-bold gradient-text">{collectedAnswers.length}</p>
+                <p className="text-sm text-gray-400">Total Questions</p>
+              </div>
+            </div>
+
+            <p className="text-gray-400 max-w-md mx-auto">
+              {isUploading
+                ? 'Processing your interview...'
+                : 'Your feedback is being generated. Redirecting to dashboard...'}
+            </p>
+
+            {isUploading && (
+              <motion.div
+                animate={{ rotate: 360 }}
+                transition={{ duration: 1, repeat: Infinity, ease: 'linear' }}
+                className="w-12 h-12 border-4 border-purple-500 border-t-transparent rounded-full mx-auto"
+              />
+            )}
           </motion.div>
         );
 
@@ -382,6 +581,55 @@ const Interview = () => {
           </div>
         </motion.div>
       </div>
+
+      {/* End Interview Confirmation Dialog */}
+      <AnimatePresence>
+        {showEndConfirmDialog && (
+          <motion.div
+            initial={{ opacity: 0 }}
+            animate={{ opacity: 1 }}
+            exit={{ opacity: 0 }}
+            className="fixed inset-0 bg-black/60 backdrop-blur-sm flex items-center justify-center z-50 px-4"
+            onClick={() => setShowEndConfirmDialog(false)}
+          >
+            <motion.div
+              initial={{ scale: 0.9, opacity: 0 }}
+              animate={{ scale: 1, opacity: 1 }}
+              exit={{ scale: 0.9, opacity: 0 }}
+              onClick={(e) => e.stopPropagation()}
+              className="glass-effect rounded-2xl p-8 max-w-md w-full space-y-6"
+            >
+              <div className="text-center space-y-2">
+                <div className="text-5xl mb-4">⚠️</div>
+                <h3 className="text-2xl font-bold">End Interview?</h3>
+                <p className="text-gray-400">
+                  Are you sure you want to end the interview? You have answered {currentQuestionIndex} out of {currentQuestion?.totalQuestions || 0} questions.
+                </p>
+              </div>
+
+              <div className="flex gap-4">
+                <AnimatedButton
+                  variant="secondary"
+                  onClick={() => setShowEndConfirmDialog(false)}
+                  className="flex-1"
+                >
+                  Continue Interview
+                </AnimatedButton>
+                <AnimatedButton
+                  variant="primary"
+                  onClick={() => {
+                    setShowEndConfirmDialog(false);
+                    handleEndInterview();
+                  }}
+                  className="flex-1 bg-red-500 hover:bg-red-600"
+                >
+                  Yes, End Now
+                </AnimatedButton>
+              </div>
+            </motion.div>
+          </motion.div>
+        )}
+      </AnimatePresence>
     </div>
   );
 };

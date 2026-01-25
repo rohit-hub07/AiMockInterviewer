@@ -21,6 +21,24 @@ export interface Interview {
   score?: number;
   questions?: number;
   duration?: string;
+  feedback?: InterviewFeedback;
+}
+
+export interface InterviewFeedback {
+  id: string;
+  questions: Array<{
+    id: number;
+    question: string;
+  }>;
+  userAnswers: Array<{
+    id: number;
+    answer: string;
+  }>;
+  overallScore?: number;
+  strengths?: string[];
+  improvements?: string[];
+  detailedFeedback?: string;
+  createdAt?: string;
 }
 
 export interface Question {
