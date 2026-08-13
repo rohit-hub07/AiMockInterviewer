@@ -8,7 +8,7 @@ const Home = () => {
       {/* Background gradient effects */}
       <div className="absolute inset-0 -z-10">
         <div className="absolute top-0 right-0 w-150 h-150 bg-purple-500/20 rounded-full blur-[150px]" />
-        <div className="absolute bottom-0 left-0 w-125 h-125bg-pink-500/20 rounded-full blur-[150px]" />
+        <div className="absolute bottom-0 left-0 w-125 h-125 bg-pink-500/20 rounded-full blur-[150px]" />
       </div>
 
       {/* Hero Section */}

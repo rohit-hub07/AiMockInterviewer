@@ -1,4 +1,4 @@
-import { useState, useEffect, useCallback } from 'react';
+import { useState, useEffect, useCallback, useRef } from 'react';
 import { motion, AnimatePresence } from 'framer-motion';
 import { useNavigate } from 'react-router-dom';
 import toast from 'react-hot-toast';
@@ -12,9 +12,9 @@ import {
   getQuestionByIndex,
   speakQuestion,
   stopSpeaking,
-  uploadAnswerVideo,
+  submitTextAnswers,
 } from '../lib/interview';
-import { generateFeedback } from '../lib/api';
+import { generateFeedback, endInterviewSession } from '../lib/api';
 import type { InterviewState, InterviewQuestion } from '../types';
 
 /**
@@ -33,7 +33,7 @@ import type { InterviewState, InterviewQuestion } from '../types';
  */
 const Interview = () => {
   const navigate = useNavigate();
-  const { stream, isLoading: cameraLoading, error: cameraError, hasPermission, requestPermission } = useCamera();
+  const { stream, isLoading: cameraLoading, error: cameraError, hasPermission, requestPermission, stopCamera } = useCamera();
   const {
     isRecording,
     recordedBlob,
@@ -51,12 +51,18 @@ const Interview = () => {
   const [isUploading, setIsUploading] = useState(false);
   const [showEndConfirmDialog, setShowEndConfirmDialog] = useState(false);
   const [hasLoadedFirstQuestion, setHasLoadedFirstQuestion] = useState(false);
+  const [feedbackScore, setFeedbackScore] = useState<number | null>(null);
+  const lastProcessedBlobRef = useRef<Blob | null>(null);
+
+  // Default answer text for skipped questions
+  const DEFAULT_SKIPPED_ANSWER = "I don't know the answer of this question";
 
   // Store all answers to upload at the end
   const [collectedAnswers, setCollectedAnswers] = useState<Array<{
     questionId: string;
     questionNumber: number;
     videoBlob: Blob | null;
+    answerText: string;
   }>>([]);
 
   /**
@@ -187,11 +193,12 @@ const Interview = () => {
 
     console.log('Saving answer for question', currentQuestionIndex + 1, 'blob:', !!blob);
 
-    // Add answer to collection (even if null/empty)
+    const answerText = blob ? '' : DEFAULT_SKIPPED_ANSWER;
     setCollectedAnswers(prev => [...prev, {
       questionId: currentQuestion.id,
       questionNumber: currentQuestion.questionNumber,
       videoBlob: blob,
+      answerText: answerText,
     }]);
 
     if (blob) {
@@ -200,13 +207,11 @@ const Interview = () => {
       toast('Answer skipped (no recording)', { icon: '⏭️' });
     }
 
-    // Reset recording state
     resetRecording();
 
-    // Move to next question
     const nextIndex = currentQuestionIndex + 1;
     loadQuestion(nextIndex);
-  }, [currentQuestion, currentQuestionIndex, resetRecording]);
+  }, [currentQuestion, currentQuestionIndex, resetRecording, loadQuestion]);
 
   /**
    * Handle skip question
@@ -214,18 +219,15 @@ const Interview = () => {
   const handleSkipQuestion = useCallback(() => {
     if (!currentQuestion) return;
 
-    // Stop any ongoing recording
     if (isRecording) {
       stopRecording();
     }
 
-    // Stop AI speaking
     stopSpeaking();
     setIsAISpeaking(false);
 
-    // Save empty answer for this question
     saveAnswerAndProceed(null);
-  }, [currentQuestion, isRecording, stopRecording, saveAnswerAndProceed]);
+  }, [currentQuestion, isRecording, stopRecording, saveAnswerAndProceed, stopSpeaking]);
 
   /**
    * Handle end interview early
@@ -241,16 +243,26 @@ const Interview = () => {
     setIsAISpeaking(false);
 
     completeInterview();
-  }, [isRecording, stopRecording]);
+  }, [isRecording, stopRecording, stopSpeaking]);
 
   /**
    * Save recorded answer and move to next question
    */
   useEffect(() => {
     if (recordedBlob && interviewState === 'processing') {
+      if (lastProcessedBlobRef.current === recordedBlob) {
+        return;
+      }
+      lastProcessedBlobRef.current = recordedBlob;
       saveAnswerAndProceed(recordedBlob);
     }
   }, [recordedBlob, interviewState, saveAnswerAndProceed]);
+
+  useEffect(() => {
+    if (!recordedBlob) {
+      lastProcessedBlobRef.current = null;
+    }
+  }, [recordedBlob]);
 
   /**
    * Complete the interview and upload all answers
@@ -258,57 +270,58 @@ const Interview = () => {
   const completeInterview = async () => {
     setInterviewState('completed');
     stopSpeaking();
+    stopCamera();
 
     console.log('Interview complete! Total answers collected:', collectedAnswers.length);
 
-    const answeredCount = collectedAnswers.filter(a => a.videoBlob).length;
+    const MIN_BYTES = 50_000; 
+    const answeredCount = collectedAnswers.filter(a => a.videoBlob && a.videoBlob.size > MIN_BYTES).length;
     const skippedCount = collectedAnswers.length - answeredCount;
 
-    // Upload all answers
     const interviewId = sessionStorage.getItem('currentInterviewId') || 'temp-id';
 
     try {
       setIsUploading(true);
       toast.loading('Uploading your answers...');
 
-      // Upload each answer individually
-      for (const answer of collectedAnswers) {
-        if (answer.videoBlob) {
-          console.log(`Uploading answer ${answer.questionNumber}...`);
-          await uploadAnswerVideo(
-            interviewId,
-            answer.questionId,
-            answer.videoBlob,
-            answer.questionNumber
-          );
-        } else {
-          console.log(`Skipping upload for empty answer ${answer.questionNumber}`);
-        }
-      }
+      const textAnswers = collectedAnswers.map(answer => ({
+        id: parseInt(answer.questionId),
+        answer: answer.answerText || DEFAULT_SKIPPED_ANSWER,
+        isSkipped: !answer.videoBlob || answer.videoBlob.size <= MIN_BYTES,
+      }));
+      console.log("textAnswers: ", textAnswers);
+      await submitTextAnswers(interviewId, textAnswers);
 
       toast.dismiss();
       toast.success(`Answers uploaded! ${answeredCount} answered, ${skippedCount} skipped`);
 
-      // Generate feedback
-      if (answeredCount > 0) {
-        toast.loading('Generating your feedback...');
+      toast.loading('Generating your feedback...');
 
-        try {
-          const feedbackResult = await generateFeedback(interviewId);
-          console.log('Feedback generated:', feedbackResult);
-          toast.dismiss();
-          toast.success('Feedback generated successfully!');
-        } catch (feedbackError) {
-          console.error('Failed to generate feedback:', feedbackError);
-          toast.dismiss();
-          toast.error('Failed to generate feedback, but your answers are saved.');
+      try {
+        const feedbackResult = await generateFeedback(interviewId);
+        console.log('Feedback generated:', feedbackResult);
+        const overallScore = feedbackResult?.feedback?.result?.score ?? feedbackResult?.feedback?.overallScore ?? null;
+        
+        if (overallScore !== null) {
+          setFeedbackScore(overallScore);
         }
+
+        toast.dismiss();
+        toast.success('Feedback generated successfully!');
+      } catch (feedbackError) {
+        console.error('Failed to generate feedback:', feedbackError);
+        toast.dismiss();
+        toast.error('Failed to generate feedback, but your answers are saved.');
       }
 
-      // Show completion summary
+      try {
+        await endInterviewSession(interviewId);
+      } catch (endError) {
+        console.error('Failed to end interview session:', endError);
+      }
+
       await new Promise(resolve => setTimeout(resolve, 1500));
 
-      // Navigate to dashboard
       navigate('/dashboard');
     } catch (error) {
       console.error('Failed to upload answers:', error);
@@ -334,8 +347,9 @@ const Interview = () => {
   useEffect(() => {
     return () => {
       stopSpeaking();
+      stopCamera();
     };
-  }, []);
+  }, [stopSpeaking, stopCamera]);
 
   /**
    * Render different states
@@ -485,24 +499,30 @@ const Interview = () => {
             </motion.div>
             <h2 className="text-3xl font-bold gradient-text">Interview Completed!</h2>
 
-            {/* Summary Stats */}
-            <div className="glass-effect rounded-2xl p-6 max-w-md mx-auto space-y-4">
-              <h3 className="text-xl font-semibold text-gray-300">Summary</h3>
-              <div className="grid grid-cols-2 gap-4">
-                <div className="bg-green-500/10 rounded-xl p-4">
-                  <p className="text-3xl font-bold text-green-400">{answeredCount}</p>
-                  <p className="text-sm text-gray-400">Answered</p>
-                </div>
-                <div className="bg-yellow-500/10 rounded-xl p-4">
-                  <p className="text-3xl font-bold text-yellow-400">{skippedCount}</p>
-                  <p className="text-sm text-gray-400">Skipped</p>
-                </div>
-              </div>
-              <div className="bg-purple-500/10 rounded-xl p-4">
-                <p className="text-3xl font-bold gradient-text">{collectedAnswers.length}</p>
-                <p className="text-sm text-gray-400">Total Questions</p>
-              </div>
-            </div>
+             {/* Summary Stats */}
+             <div className="glass-effect rounded-2xl p-6 max-w-md mx-auto space-y-4">
+               <h3 className="text-xl font-semibold text-gray-300">Summary</h3>
+               <div className="grid grid-cols-2 gap-4">
+                 <div className="bg-green-500/10 rounded-xl p-4">
+                   <p className="text-3xl font-bold text-green-400">{answeredCount}</p>
+                   <p className="text-sm text-gray-400">Answered</p>
+                 </div>
+                 <div className="bg-yellow-500/10 rounded-xl p-4">
+                   <p className="text-3xl font-bold text-yellow-400">{skippedCount}</p>
+                   <p className="text-sm text-gray-400">Skipped</p>
+                 </div>
+               </div>
+               <div className="bg-purple-500/10 rounded-xl p-4">
+                 <p className="text-3xl font-bold gradient-text">{collectedAnswers.length}</p>
+                 <p className="text-sm text-gray-400">Total Questions</p>
+               </div>
+                {feedbackScore !== null && (
+                  <div className="bg-gradient-to-r from-purple-500/10 to-pink-500/10 rounded-xl p-4">
+                    <p className="text-sm text-gray-400 mb-1">Overall Score</p>
+                    <p className="text-4xl font-bold gradient-text">{feedbackScore}%</p>
+                  </div>
+                )}
+             </div>
 
             <p className="text-gray-400 max-w-md mx-auto">
               {isUploading

@@ -3,14 +3,14 @@ import { GoogleGenAI } from "@google/genai";
 
 const ai = new GoogleGenAI({ apiKey: process.env.GEMINI_API as string });
 
-export const generateQues = async (resumeText: string, difficulty : string = "hard") => {
+export const generateQues = async (resumeText: string, difficulty : string = "moderate") => {
   const prompt = `
     You are an AI technical interviewer.
 
     Based on this resume, generate 10 interview questions:
     ${resumeText}
 
-    and keep the difficulty level: ${difficulty}
+    and keep the difficulty level: ${difficulty} for freshers
 
     Return questions as JSON like this:
     [

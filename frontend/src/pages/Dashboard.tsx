@@ -253,7 +253,7 @@ const Dashboard = () => {
                         <span className="flex items-center gap-2">
                           📅 {new Date(interview.date).toLocaleDateString()}
                         </span>
-                        {interview.questions && (
+                        {interview.questions !== undefined && (
                           <span className="flex items-center gap-2">
                             ❓ {interview.questions} questions
                           </span>
@@ -360,28 +360,26 @@ const Dashboard = () => {
                   />
                   <p className="text-gray-400">Loading feedback...</p>
                 </div>
-              ) : feedbackData ? (
+               ) : feedbackData ? (
                 <>
-                  {/* Score Section */}
-                  {selectedInterview.score !== undefined && (
+                   {(selectedInterview.score !== undefined || feedbackData.overallScore !== undefined) && (
                     <div className="glass-effect bg-gradient-to-r from-purple-500/10 to-pink-500/10 rounded-2xl p-6">
                       <div className="flex items-center justify-between">
                         <div>
                           <p className="text-sm text-gray-400 mb-1">Overall Score</p>
                           <p className="text-5xl font-bold gradient-text">
-                            {selectedInterview.score}%
+                            {(selectedInterview.score ?? feedbackData.overallScore)!}%
                           </p>
                         </div>
                         <div className="text-6xl">
-                          {selectedInterview.score >= 80 ? '🌟' :
-                            selectedInterview.score >= 60 ? '⭐' : '📈'}
+                          {(selectedInterview.score ?? feedbackData.overallScore)! >= 80 ? '🌟' :
+                            (selectedInterview.score ?? feedbackData.overallScore)! >= 60 ? '⭐' : '📈'}
                         </div>
                       </div>
                     </div>
                   )}
 
-                  {/* Strengths & Improvements */}
-                  {(feedbackData.strengths || feedbackData.improvements) && (
+                  {(feedbackData.strengths?.length || feedbackData.improvements?.length) && (
                     <div className="grid md:grid-cols-2 gap-6">
                       {feedbackData.strengths && feedbackData.strengths.length > 0 && (
                         <div className="space-y-3">

@@ -4,6 +4,7 @@ import { useNavigate } from 'react-router-dom';
 import api from '../lib/api';
 import toast from 'react-hot-toast';
 import AnimatedButton from '../components/AnimatedButton';
+import { updateInterviewSession, saveInterviewQuestions } from '../lib/api';
 
 interface Question {
   id: number;
@@ -56,7 +57,6 @@ const Upload = () => {
     setIsUploading(true);
     setUploadProgress(0);
 
-    // Simulate progress for better UX
     const progressInterval = setInterval(() => {
       setUploadProgress((prev) => {
         if (prev >= 90) {
@@ -85,7 +85,6 @@ const Upload = () => {
         setQuestions(response.data.questionsObject || []);
         setShowQuestions(true);
 
-        // Store questions in sessionStorage for interview page
         sessionStorage.setItem('interviewQuestions', JSON.stringify(response.data.questionsObject));
       }
     } catch (error: any) {
@@ -100,10 +99,25 @@ const Upload = () => {
 
   const handleStartInterview = async () => {
     try {
-      const response = await api.post('/create');
+      const response = await api.post('/interviews/create');
       if (response.data.success) {
         const interviewId = response.data.interviewId;
         sessionStorage.setItem('currentInterviewId', interviewId);
+        
+        if (questions.length > 0) {
+          try {
+            await Promise.all([
+              updateInterviewSession(interviewId, {
+                questionCount: questions.length,
+                title: `Interview - ${new Date().toLocaleDateString()}`,
+              }),
+              saveInterviewQuestions(interviewId, questions),
+            ]);
+          } catch (updateError) {
+            console.error('Failed to update interview session:', updateError);
+          }
+        }
+        
         navigate('/interview');
         toast.success('Starting interview...');
       }

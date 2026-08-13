@@ -13,11 +13,24 @@ const interviewSchema = new mongoose.Schema({
     type: Schema.Types.ObjectId,
     ref: "User",
   },
+  title: {
+    type: String,
+    default: "Interview Session",
+  },
   startedAt: {
     type: Date,
   },
   endedAt: {
     type: Date,
+  },
+  score: {
+    type: Number,
+    min: 0,
+    max: 100,
+  },
+  questionCount: {
+    type: Number,
+    default: 0,
   },
 })
 

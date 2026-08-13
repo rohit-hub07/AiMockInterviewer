@@ -49,3 +49,27 @@ export const generateFeedback = async (interviewId: string) => {
   const response = await api.post('/feedback', { interviewId });
   return response.data;
 };
+
+/**
+ * End an interview session
+ */
+export const endInterviewSession = async (interviewId: string) => {
+  const response = await api.post('/interviews/end', { interviewId });
+  return response.data;
+};
+
+/**
+ * Update interview session details
+ */
+export const updateInterviewSession = async (interviewId: string, data: { questionCount?: number; title?: string }) => {
+  const response = await api.post('/interviews/update', { interviewId, ...data });
+  return response.data;
+};
+
+/**
+ * Save questions for an interview
+ */
+export const saveInterviewQuestions = async (interviewId: string, questions: Array<{ id: number; question: string }>) => {
+  const response = await api.post('/question/create-question', { questionObject: questions, interviewId });
+  return response.data;
+};

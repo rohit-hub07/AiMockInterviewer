@@ -89,11 +89,10 @@ export const useMediaRecorder = (): UseMediaRecorderResult => {
     }
   }, []);
 
-  const stopRecording = useCallback(async (): Promise<void> => {
+  const stopRecording = useCallback((): Promise<void> => {
     return new Promise((resolve) => {
-      if (mediaRecorderRef.current && isRecording) {
-        // Wait for the stop event to complete
-        const recorder = mediaRecorderRef.current;
+      const recorder = mediaRecorderRef.current;
+      if (recorder && recorder.state === 'recording') {
         recorder.onstop = () => {
           const blob = new Blob(chunksRef.current, { type: 'video/webm' });
           setRecordedBlob(blob);
@@ -112,7 +111,7 @@ export const useMediaRecorder = (): UseMediaRecorderResult => {
         resolve();
       }
     });
-  }, [isRecording]);
+  }, []);
 
   const resetRecording = useCallback(() => {
     chunksRef.current = [];

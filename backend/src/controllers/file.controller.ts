@@ -3,6 +3,7 @@ import fs from "fs";
 import { extractTextFromFile } from "../services/file.services.js";
 import { cleanExtractedText } from "../utils/cleanText.js";
 import { generateQues } from "../utils/generateQuestions.js";
+import Question from "../models/question.model.js";
 
 
 export const uploadFile = async (req: Request, res: Response) => {
@@ -57,6 +58,7 @@ export const uploadFile = async (req: Request, res: Response) => {
     // const createdQuestions = await Question.create({
     //   questions: questionObjects,
     //   userId: req.userId,
+    //   interviewId: interviewId.toString(),
     // })
     
     // if (!createdQuestions) {

@@ -4,6 +4,8 @@ import type { Question, InterviewQuestion } from '../types';
 /**
  * Fetch interview questions from sessionStorage or backend
  */
+
+// here younhave to call the backend api for questions
 export const getInterviewQuestions = (): Question[] => {
   const stored = sessionStorage.getItem('interviewQuestions');
   if (stored) {
@@ -30,6 +32,8 @@ export const getQuestionByIndex = (index: number): InterviewQuestion | null => {
 /**
  * Upload recorded answer video to backend
  */
+
+//upload answer video functionality is not provided right now will do it later
 export const uploadAnswerVideo = async (
   interviewId: string,
   questionId: string,
@@ -41,7 +45,8 @@ export const uploadAnswerVideo = async (
   formData.append('interviewId', interviewId);
   formData.append('questionId', questionId);
   formData.append('questionNumber', questionNumber.toString());
-
+  console.log("formdata before hitting /answer: "+formData);
+  // /answer route is not defined!
   await api.post('/answer', formData, {
     headers: {
       'Content-Type': 'multipart/form-data',
@@ -68,7 +73,8 @@ export const uploadAllAnswers = async (
     if (answer.videoBlob) {
       formData.append(`video_${answer.questionNumber}`, answer.videoBlob, `answer-${answer.questionNumber}.webm`);
       formData.append(`questionId_${answer.questionNumber}`, answer.questionId);
-    } else {
+    }
+     else {
       // Mark as empty/skipped answer
       formData.append(`empty_${answer.questionNumber}`, 'true');
       formData.append(`questionId_${answer.questionNumber}`, answer.questionId);
@@ -81,6 +87,20 @@ export const uploadAllAnswers = async (
     headers: {
       'Content-Type': 'multipart/form-data',
     },
+  });
+};
+
+/**
+ * Submit text answers to the backend
+ * Used for submitting all answers including default answers for skipped questions
+ */
+export const submitTextAnswers = async (
+  interviewId: string,
+  answers: Array<{ id: number; answer: string }>
+): Promise<void> => {
+  await api.post('/answer/user-answer', {
+    interviewId,
+    userAnswer: answers,
   });
 };
 

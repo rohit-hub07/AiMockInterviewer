@@ -1,12 +1,10 @@
 import mongoose, { Schema } from "mongoose";
 
 interface IAnswer {
-  id: number;
-  answer: string;
-}
-
-interface IAnswer extends Document {
-  answers: IAnswer[];
+  answers: {
+    id: number;
+    answer: string;
+  }[];
   userId: Schema.Types.ObjectId;
   interviewId: Schema.Types.ObjectId;
   createdAt: Date;
@@ -20,6 +18,10 @@ const answerSchema = new mongoose.Schema<IAnswer>({
         type: Number
       },
       answer: String,
+      isSkipped: {
+        type: Boolean,
+        default: false,
+      },
     },
   ],
   userId: {

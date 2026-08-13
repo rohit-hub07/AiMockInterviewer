@@ -2,6 +2,38 @@ import type { Request, Response } from "express"
 import InterviewSession from "../models/interviewsession.model.js";
 
 
+export const updateInterviewSession = async (req: Request, res: Response) => {
+  try {
+    const { interviewId } = req.body;
+    const { questionCount, title } = req.body;
+    const userId = req.userId;
+
+    if (!interviewId) {
+      return res.status(404).json({
+        message: "Interview id not found!",
+        success: false,
+      })
+    }
+
+    const updateData: any = {};
+    if (questionCount !== undefined) updateData.questionCount = questionCount;
+    if (title !== undefined) updateData.title = title;
+
+    await InterviewSession.findByIdAndUpdate(interviewId, updateData);
+
+    return res.status(200).json({
+      message: "Interview updated successfully!",
+      success: true,
+    })
+  } catch (error: any) {
+    console.log("Error updating interview session: ", error.message);
+    return res.status(500).json({
+      message: error.message || "Something went wrong!",
+      success: false,
+    })
+  }
+}
+
 export const createInterviewSession = async (req: Request, res: Response) => {
   try {
     const userId = req.userId;
@@ -59,21 +91,24 @@ export const getUserInterviews = async (req: Request, res: Response) => {
   try {
     const userId = req.userId;
 
-    // Fetch all interview sessions for the user
     const sessions = await InterviewSession.find({ userId })
-      .sort({ startedAt: -1 }); // Most recent first
+      .sort({ startedAt: -1 });
 
-    // Transform to match frontend format
-    const interviews = sessions.map((session: any) => ({
-      id: session._id.toString(),
-      title: `Interview Session`,
-      status: session.endedAt ? 'completed' : 'in-progress',
-      date: session.startedAt.toISOString(),
-      questions: 0, // You can populate this from answers if needed
-      duration: session.endedAt
-        ? `${Math.round((new Date(session.endedAt).getTime() - new Date(session.startedAt).getTime()) / 60000)} min`
-        : undefined,
-    }));
+    const interviews = sessions.map((session: any) => {
+      const durationMinutes = session.endedAt
+        ? Math.round((new Date(session.endedAt).getTime() - new Date(session.startedAt).getTime()) / 60000)
+        : undefined;
+
+      return {
+        id: session._id.toString(),
+        title: session.title || `Interview Session`,
+        status: session.endedAt ? 'completed' : 'in-progress',
+        date: session.startedAt.toISOString(),
+        score: session.score,
+        questions: session.questionCount || 0,
+        duration: durationMinutes ? `${durationMinutes} min` : undefined,
+      };
+    });
 
     return res.status(200).json({
       success: true,

@@ -4,7 +4,7 @@ import { isLoggedIn } from "../middlewares/isLoggedIn.js";
 
 const feedbackRoute = express.Router();
 
-feedbackRoute.post("/feedback", feedBackController);
+feedbackRoute.post("/feedback", isLoggedIn, feedBackController);
 feedbackRoute.get("/feedback/:interviewId", isLoggedIn, getFeedback);
 
 export default feedbackRoute;
