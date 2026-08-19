@@ -187,4 +187,5 @@ npm start
 ## Notes
 
 - Video uploads are not yet fully implemented; answers are currently stored as text with a skip flag based on recording presence.
+
 - The camera stream is automatically released when the interview ends or the user navigates away.
