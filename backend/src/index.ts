@@ -13,9 +13,6 @@ dotenv.config();
 
 const app = express();
 const PORT = process.env.PORT;
-console.log("Port: ", PORT)
-
-console.log("frontend url: ", process.env.FRONTEND_URL)
 
 const corsOptions = {
   origin: (origin: any, callback: any) => {
