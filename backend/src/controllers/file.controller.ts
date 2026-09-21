@@ -1,23 +1,35 @@
 import type { Request, Response } from "express";
-import fs from "fs";
-import { extractTextFromFile } from "../services/file.services.js";
+import { extractTextFromBuffer } from "../services/file.services.js";
 import { cleanExtractedText } from "../utils/cleanText.js";
 import { generateQues } from "../utils/generateQuestions.js";
+import { uploadBufferToCloudinary } from "../utils/cloudinary.js";
 import Question from "../models/question.model.js";
 
 
 export const uploadFile = async (req: Request, res: Response) => {
   try {
-    if (!req.file) {
+    if (!req.file?.buffer) {
       return res.status(400).json({ message: "No file uploaded" });
     }
 
-    const text = await extractTextFromFile(
-      req.file.path,
+    const text = await extractTextFromBuffer(
+      req.file.buffer,
       req.file.mimetype
     );
 
-    fs.unlinkSync(req.file.path); // delete temp file
+    // Upload original resume to Cloudinary (raw resource for pdf/docx)
+    const isMedia =
+      req.file.mimetype.startsWith("video/") ||
+      req.file.mimetype.startsWith("audio/") ||
+      req.file.mimetype.startsWith("image/");
+    const baseName =
+      req.file.originalname.replace(/\.[^/.]+$/, "").replace(/[^\w-]+/g, "_") ||
+      "resume";
+    const uploaded = await uploadBufferToCloudinary(req.file.buffer, {
+      folder: "aimockinterviewer/resumes",
+      resource_type: isMedia ? "auto" : "raw",
+      public_id: `${baseName}_${Date.now()}`,
+    });
     const cleanedText = await cleanExtractedText(text);
 
     const result = await generateQues(cleanedText);
@@ -70,7 +82,7 @@ export const uploadFile = async (req: Request, res: Response) => {
 
     // return res.status(200).json({ extractedText: cleanedText });
 
-    return res.status(200).json({ message: "Question created successfully", success: true, questionsObject:questionObjects });
+    return res.status(200).json({ message: "Question created successfully", success: true, questionsObject:questionObjects, fileUrl: uploaded.secure_url, public_id: uploaded.public_id });
 
   } catch (error: any) {
     res.status(500).json({ message: error.message || "Something went wrong" });
