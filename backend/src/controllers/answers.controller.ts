@@ -23,11 +23,13 @@ export const answersController = async (req: Request, res: Response) => {
         success: "false"
       })
     }
-    const answer = await Answer.create({
-      answers: userAnswer,
-      userId: userId,
-      interviewId: interviewId,
-    })
+    // Upsert so re-submits / retries overwrite instead of creating duplicates,
+    // and feedback always reads the latest answers for this interview.
+    const answer = await Answer.findOneAndUpdate(
+      { interviewId: interviewId as any, userId: userId as any },
+      { answers: userAnswer, userId: userId, interviewId: interviewId },
+      { new: true, upsert: true, runValidators: true }
+    )
     if (!answer) {
       return res.status(500).json({
         message: "Error storing the answers!",

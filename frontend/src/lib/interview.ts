@@ -96,7 +96,7 @@ export const uploadAllAnswers = async (
  */
 export const submitTextAnswers = async (
   interviewId: string,
-  answers: Array<{ id: number; answer: string }>
+  answers: Array<{ id: number; answer: string; isSkipped?: boolean }>
 ): Promise<void> => {
   await api.post('/answer/user-answer', {
     interviewId,

@@ -9,7 +9,10 @@ export const calculateLocalScore = (
   }
 
   const answeredCount = answers.filter(a => {
+    // Explicit flag from frontend is source of truth when present
+    // (video answers have no transcription yet, only a placeholder).
     if (a.isSkipped === true) return false;
+    if (a.isSkipped === false) return true;
     const text = (a.answer || "").trim();
     return text.length > 0 && text !== DEFAULT_SKIPPED_ANSWER;
   }).length;

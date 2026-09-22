@@ -65,6 +65,12 @@ const Interview = () => {
     answerText: string;
   }>>([]);
 
+  // Mirror state in a ref so async callbacks (loadQuestion/completeInterview)
+  // always see the latest answers instead of a stale closure (which caused
+  // 0 questions answered / empty upload).
+  const collectedAnswersRef = useRef<typeof collectedAnswers>([]);
+  const MIN_BYTES = 50_000;
+
   /**
    * Initialize interview: Request camera permission
    */
@@ -124,6 +130,85 @@ const Interview = () => {
   }, [stream, startRecording]);
 
   /**
+   * Complete the interview and upload all answers
+   * Reads from collectedAnswersRef so it never sees a stale empty array.
+   * Accepts an optional explicit list (used when the last answer was just saved).
+   */
+  const completeInterview = useCallback(async (finalAnswers?: typeof collectedAnswersRef.current) => {
+    setInterviewState('completed');
+    stopSpeaking();
+    stopCamera();
+
+    const answersToUpload = finalAnswers ?? collectedAnswersRef.current;
+    console.log('Interview complete! Total answers collected:', answersToUpload.length);
+
+    const answeredCount = answersToUpload.filter(a => a.videoBlob && a.videoBlob.size > MIN_BYTES).length;
+    const skippedCount = answersToUpload.length - answeredCount;
+
+    const interviewId = sessionStorage.getItem('currentInterviewId') || 'temp-id';
+
+    try {
+      setIsUploading(true);
+      toast.loading('Uploading your answers...');
+
+      const textAnswers = answersToUpload.map(answer => {
+        const hasVideo = !!answer.videoBlob && answer.videoBlob.size > MIN_BYTES;
+        return {
+          id: parseInt(answer.questionId),
+          // Video answers have no transcription yet, so send a non-empty
+          // placeholder that the backend counts as answered (see scoreCalculator).
+          // Skipped questions keep DEFAULT_SKIPPED_ANSWER.
+          answer: hasVideo
+            ? (answer.answerText && answer.answerText.trim().length > 0
+                ? answer.answerText
+                : `Video answer recorded for question ${answer.questionNumber}`)
+            : DEFAULT_SKIPPED_ANSWER,
+          isSkipped: !hasVideo,
+        };
+      });
+      console.log("textAnswers: ", textAnswers);
+      await submitTextAnswers(interviewId, textAnswers);
+
+      toast.dismiss();
+      toast.success(`Answers uploaded! ${answeredCount} answered, ${skippedCount} skipped`);
+
+      toast.loading('Generating your feedback...');
+
+      try {
+        const feedbackResult = await generateFeedback(interviewId);
+        console.log('Feedback generated:', feedbackResult);
+        const overallScore = feedbackResult?.feedback?.result?.score ?? feedbackResult?.feedback?.overallScore ?? null;
+
+        if (overallScore !== null) {
+          setFeedbackScore(overallScore);
+        }
+
+        toast.dismiss();
+        toast.success('Feedback generated successfully!');
+      } catch (feedbackError) {
+        console.error('Failed to generate feedback:', feedbackError);
+        toast.dismiss();
+        toast.error('Failed to generate feedback, but your answers are saved.');
+      }
+
+      try {
+        await endInterviewSession(interviewId);
+      } catch (endError) {
+        console.error('Failed to end interview session:', endError);
+      }
+
+      await new Promise(resolve => setTimeout(resolve, 1500));
+
+      navigate('/dashboard');
+    } catch (error) {
+      console.error('Failed to upload answers:', error);
+      toast.dismiss();
+      toast.error('Failed to upload some answers. Please try again.');
+      setIsUploading(false);
+    }
+  }, [navigate, stopCamera]);
+
+  /**
    * Load and play a question
    */
   const loadQuestion = useCallback(async (questionIndex: number) => {
@@ -171,7 +256,7 @@ const Interview = () => {
       // Still allow recording even if TTS fails
       startRecordingAnswer();
     }
-  }, [stream, startRecordingAnswer]);
+  }, [stream, startRecordingAnswer, completeInterview]);
 
   /**
    * Handle "Next Question" button click
@@ -191,17 +276,27 @@ const Interview = () => {
   const saveAnswerAndProceed = useCallback((blob: Blob | null) => {
     if (!currentQuestion) return;
 
-    console.log('Saving answer for question', currentQuestionIndex + 1, 'blob:', !!blob);
+    console.log('Saving answer for question', currentQuestionIndex + 1, 'blob:', !!blob, 'size:', blob?.size);
 
-    const answerText = blob ? '' : DEFAULT_SKIPPED_ANSWER;
-    setCollectedAnswers(prev => [...prev, {
+    const hasVideo = !!blob && blob.size > MIN_BYTES;
+    // Video answers get a non-empty placeholder so the backend counts them
+    // as answered. Skipped questions keep DEFAULT_SKIPPED_ANSWER.
+    const answerText = hasVideo
+      ? `Video answer recorded for question ${currentQuestion.questionNumber}`
+      : DEFAULT_SKIPPED_ANSWER;
+    const newEntry = {
       questionId: currentQuestion.id,
       questionNumber: currentQuestion.questionNumber,
       videoBlob: blob,
       answerText: answerText,
-    }]);
+    };
+    // Update ref synchronously so completeInterview (called via loadQuestion
+    // when this was the last question) sees the just-saved answer.
+    const updated = [...collectedAnswersRef.current, newEntry];
+    collectedAnswersRef.current = updated;
+    setCollectedAnswers(updated);
 
-    if (blob) {
+    if (hasVideo) {
       toast.success(`Answer ${currentQuestionIndex + 1} saved!`);
     } else {
       toast('Answer skipped (no recording)', { icon: '⏭️' });
@@ -243,7 +338,7 @@ const Interview = () => {
     setIsAISpeaking(false);
 
     completeInterview();
-  }, [isRecording, stopRecording, stopSpeaking]);
+  }, [isRecording, stopRecording, stopSpeaking, completeInterview]);
 
   /**
    * Save recorded answer and move to next question
@@ -263,73 +358,6 @@ const Interview = () => {
       lastProcessedBlobRef.current = null;
     }
   }, [recordedBlob]);
-
-  /**
-   * Complete the interview and upload all answers
-   */
-  const completeInterview = async () => {
-    setInterviewState('completed');
-    stopSpeaking();
-    stopCamera();
-
-    console.log('Interview complete! Total answers collected:', collectedAnswers.length);
-
-    const MIN_BYTES = 50_000; 
-    const answeredCount = collectedAnswers.filter(a => a.videoBlob && a.videoBlob.size > MIN_BYTES).length;
-    const skippedCount = collectedAnswers.length - answeredCount;
-
-    const interviewId = sessionStorage.getItem('currentInterviewId') || 'temp-id';
-
-    try {
-      setIsUploading(true);
-      toast.loading('Uploading your answers...');
-
-      const textAnswers = collectedAnswers.map(answer => ({
-        id: parseInt(answer.questionId),
-        answer: answer.answerText || DEFAULT_SKIPPED_ANSWER,
-        isSkipped: !answer.videoBlob || answer.videoBlob.size <= MIN_BYTES,
-      }));
-      console.log("textAnswers: ", textAnswers);
-      await submitTextAnswers(interviewId, textAnswers);
-
-      toast.dismiss();
-      toast.success(`Answers uploaded! ${answeredCount} answered, ${skippedCount} skipped`);
-
-      toast.loading('Generating your feedback...');
-
-      try {
-        const feedbackResult = await generateFeedback(interviewId);
-        console.log('Feedback generated:', feedbackResult);
-        const overallScore = feedbackResult?.feedback?.result?.score ?? feedbackResult?.feedback?.overallScore ?? null;
-        
-        if (overallScore !== null) {
-          setFeedbackScore(overallScore);
-        }
-
-        toast.dismiss();
-        toast.success('Feedback generated successfully!');
-      } catch (feedbackError) {
-        console.error('Failed to generate feedback:', feedbackError);
-        toast.dismiss();
-        toast.error('Failed to generate feedback, but your answers are saved.');
-      }
-
-      try {
-        await endInterviewSession(interviewId);
-      } catch (endError) {
-        console.error('Failed to end interview session:', endError);
-      }
-
-      await new Promise(resolve => setTimeout(resolve, 1500));
-
-      navigate('/dashboard');
-    } catch (error) {
-      console.error('Failed to upload answers:', error);
-      toast.dismiss();
-      toast.error('Failed to upload some answers. Please try again.');
-      setIsUploading(false);
-    }
-  };
 
   /**
    * Handle errors
@@ -480,7 +508,7 @@ const Interview = () => {
         );
 
       case 'completed':
-        const answeredCount = collectedAnswers.filter(a => a.videoBlob).length;
+        const answeredCount = collectedAnswers.filter(a => a.videoBlob && a.videoBlob.size > MIN_BYTES).length;
         const skippedCount = collectedAnswers.length - answeredCount;
 
         return (
