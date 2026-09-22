@@ -1,5 +1,4 @@
 import fs from "fs";
-import { PDFParse } from "pdf-parse";
 import mammoth from "mammoth";
 
 export const extractTextFromBuffer = async (
@@ -7,6 +6,7 @@ export const extractTextFromBuffer = async (
   mimeType: string
 ): Promise<string> => {
   if (mimeType === "application/pdf") {
+    const { PDFParse } = await import("pdf-parse");
     const parser = new PDFParse({ data: buffer });
     const data = await parser.getText();
 
