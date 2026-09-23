@@ -545,7 +545,7 @@ const Interview = () => {
                  <p className="text-sm text-gray-400">Total Questions</p>
                </div>
                 {feedbackScore !== null && (
-                  <div className="bg-gradient-to-r from-purple-500/10 to-pink-500/10 rounded-xl p-4">
+                  <div className="bg-linear-to-r from-purple-500/10 to-pink-500/10 rounded-xl p-4">
                     <p className="text-sm text-gray-400 mb-1">Overall Score</p>
                     <p className="text-4xl font-bold gradient-text">{feedbackScore}%</p>
                   </div>
