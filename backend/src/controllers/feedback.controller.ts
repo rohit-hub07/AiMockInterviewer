@@ -4,7 +4,6 @@ import Question from "../models/question.model.js";
 import Feedback from "../models/feedback.model.js";
 import InterviewSession from "../models/interviewsession.model.js";
 import { generateFeedback } from "../utils/generateFeedback.js";
-import { cleanExtractedText } from "../utils/cleanText.js";
 import { calculateLocalScore } from "../utils/scoreCalculator.js";
 
 
@@ -19,7 +18,8 @@ export const feedBackController = async (req: Request, res: Response) => {
       })
     }
 
-    const answersDoc = await Answer.findOne({ interviewId: interviewId } as any);
+    const answersDoc = await Answer.findOne({ interviewId: interviewId, userId: userId } as any)
+      || await Answer.findOne({ interviewId: interviewId } as any);
     const questionsDoc = await Question.findOne({ interviewId } as any);
 
     const totalQuestions = questionsDoc?.questions?.length || 0;
@@ -55,26 +55,51 @@ export const feedBackController = async (req: Request, res: Response) => {
       userAnswers: answersDoc.answers
     });
 
+    console.log("Feedback inputs — questions:", questionsDoc?.questions?.length ?? 0,
+      "answers:", answersDoc?.answers?.length ?? 0,
+      "answers preview:", JSON.stringify((answersDoc?.answers || []).slice(0, 2)).slice(0, 500));
+
     let geminiParsed: any = null;
     try {
       const feedbackfromGemini = await generateFeedback(feedBack);
-      const cleanedText = cleanExtractedText(feedbackfromGemini as string);
+      const rawText = (feedbackfromGemini as string) || "";
 
-      const cleanedFeedback = cleanedText.replace(/```json/g, '')
+      // Strip markdown fences WITHOUT collapsing whitespace inside JSON strings
+      // (the old cleanExtractedText() collapsed all double-spaces/newlines and corrupted JSON).
+      const cleanedFeedback = rawText
+        .replace(/```json/gi, '')
         .replace(/```/g, '')
         .trim();
 
       try {
         geminiParsed = JSON.parse(cleanedFeedback);
       } catch {
-        geminiParsed = null;
+        // Fallback: extract the first {...} JSON object if the model added prose
+        const match = cleanedFeedback.match(/\{[\s\S]*\}/);
+        if (match) {
+          try {
+            geminiParsed = JSON.parse(match[0]);
+          } catch {
+            geminiParsed = null;
+          }
+        } else {
+          geminiParsed = null;
+        }
       }
     } catch (geminiError) {
       console.error("Gemini feedback generation failed:", geminiError);
     }
 
-    const geminiScore = geminiParsed?.result?.score ?? geminiParsed?.overallScore ?? null;
-    const finalScore = localScore.score;
+    const rawGeminiScore = geminiParsed?.result?.score ?? geminiParsed?.overallScore ?? null;
+    // Normalize: old prompt asked 0-10, new prompt asks 0-100. Accept both.
+    let geminiScore: number | null = null;
+    if (typeof rawGeminiScore === "number" && Number.isFinite(rawGeminiScore)) {
+      geminiScore = rawGeminiScore <= 10 ? Math.round(rawGeminiScore * 10) : Math.round(rawGeminiScore);
+      geminiScore = Math.min(100, Math.max(0, geminiScore));
+    }
+    // Use the LLM's qualitative score when available; fall back to participation score.
+    const finalScore = geminiScore ?? localScore.score;
+    console.log("Scores — gemini:", geminiScore, "local(participation):", localScore.score, "final:", finalScore);
 
     const strengths = geminiParsed?.strengths && geminiParsed.strengths.length > 0
       ? geminiParsed.strengths

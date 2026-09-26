@@ -4,6 +4,7 @@ import { useNavigate } from 'react-router-dom';
 import toast from 'react-hot-toast';
 import { useCamera } from '../hooks/useCamera';
 import { useMediaRecorder } from '../hooks/useMediaRecorder';
+import { useSpeechRecognition } from '../hooks/useSpeechRecognition';
 import { VideoPreview } from '../components/interview/VideoPreview';
 import { QuestionPlayer } from '../components/interview/QuestionPlayer';
 import { RecordingIndicator } from '../components/interview/RecordingIndicator';
@@ -53,6 +54,17 @@ const Interview = () => {
   const [hasLoadedFirstQuestion, setHasLoadedFirstQuestion] = useState(false);
   const [feedbackScore, setFeedbackScore] = useState<number | null>(null);
   const lastProcessedBlobRef = useRef<Blob | null>(null);
+  const {
+    transcript,
+    transcriptRef: liveTranscriptRef,
+    isSupported: isTranscriptionSupported,
+    startListening,
+    stopListening,
+    resetTranscript,
+  } = useSpeechRecognition();
+  // Holds the transcript at the moment recording stops, so the async
+  // MediaRecorder onstop callback never reads a stale/empty value.
+  const stoppedTranscriptRef = useRef<string>('');
 
   // Default answer text for skipped questions
   const DEFAULT_SKIPPED_ANSWER = "I don't know the answer of this question";
@@ -125,9 +137,14 @@ const Interview = () => {
 
     console.log('Starting recording with stream...');
     setInterviewState('recording');
+    resetTranscript();
+    stoppedTranscriptRef.current = '';
     startRecording(stream);
+    // Transcribe speech in parallel so real answer text (not just a
+    // placeholder) is sent to the backend/LLM.
+    startListening();
     toast.success('Recording started. Answer the question!');
-  }, [stream, startRecording]);
+  }, [stream, startRecording, startListening, resetTranscript]);
 
   /**
    * Complete the interview and upload all answers
@@ -142,7 +159,11 @@ const Interview = () => {
     const answersToUpload = finalAnswers ?? collectedAnswersRef.current;
     console.log('Interview complete! Total answers collected:', answersToUpload.length);
 
-    const answeredCount = answersToUpload.filter(a => a.videoBlob && a.videoBlob.size > MIN_BYTES).length;
+    const answeredCount = answersToUpload.filter(a => {
+      const t = (a.answerText || '').trim();
+      const hasRealTranscript = t.length > 0 && !t.startsWith('Video answer recorded for question') && t !== DEFAULT_SKIPPED_ANSWER;
+      return hasRealTranscript || (!!a.videoBlob && a.videoBlob.size > MIN_BYTES);
+    }).length;
     const skippedCount = answersToUpload.length - answeredCount;
 
     const interviewId = sessionStorage.getItem('currentInterviewId') || 'temp-id';
@@ -152,18 +173,23 @@ const Interview = () => {
       toast.loading('Uploading your answers...');
 
       const textAnswers = answersToUpload.map(answer => {
+        const transcriptText = (answer.answerText || '').trim();
+        const isPlaceholder = transcriptText.startsWith('Video answer recorded for question');
+        const hasRealTranscript = transcriptText.length > 0 && !isPlaceholder && transcriptText !== DEFAULT_SKIPPED_ANSWER;
         const hasVideo = !!answer.videoBlob && answer.videoBlob.size > MIN_BYTES;
+        // Answered if we have a real transcript OR a usable video.
+        // Video-only (STT unsupported/empty) keeps a placeholder but is still
+        // counted as answered for participation; the LLM prompt treats
+        // placeholders as skipped/zero so scores stay honest.
+        const answered = hasRealTranscript || hasVideo;
         return {
           id: parseInt(answer.questionId),
-          // Video answers have no transcription yet, so send a non-empty
-          // placeholder that the backend counts as answered (see scoreCalculator).
-          // Skipped questions keep DEFAULT_SKIPPED_ANSWER.
-          answer: hasVideo
-            ? (answer.answerText && answer.answerText.trim().length > 0
-                ? answer.answerText
-                : `Video answer recorded for question ${answer.questionNumber}`)
-            : DEFAULT_SKIPPED_ANSWER,
-          isSkipped: !hasVideo,
+          answer: hasRealTranscript
+            ? transcriptText
+            : hasVideo
+              ? (transcriptText.length > 0 ? transcriptText : `Video answer recorded for question ${answer.questionNumber}`)
+              : DEFAULT_SKIPPED_ANSWER,
+          isSkipped: !answered,
         };
       });
       console.log("textAnswers: ", textAnswers);
@@ -266,9 +292,13 @@ const Interview = () => {
 
     setInterviewState('processing');
 
+    // Capture + stop transcription BEFORE stopping the recorder so the
+    // final words are included in the saved answer.
+    stoppedTranscriptRef.current = stopListening();
+
     // Stop recording
     await stopRecording();
-  }, [isRecording, stopRecording]);
+  }, [isRecording, stopRecording, stopListening]);
 
   /**
    * Save answer to collection and move to next question
@@ -279,11 +309,15 @@ const Interview = () => {
     console.log('Saving answer for question', currentQuestionIndex + 1, 'blob:', !!blob, 'size:', blob?.size);
 
     const hasVideo = !!blob && blob.size > MIN_BYTES;
-    // Video answers get a non-empty placeholder so the backend counts them
-    // as answered. Skipped questions keep DEFAULT_SKIPPED_ANSWER.
-    const answerText = hasVideo
-      ? `Video answer recorded for question ${currentQuestion.questionNumber}`
-      : DEFAULT_SKIPPED_ANSWER;
+    // Prefer the live speech-to-text transcript — this is the real answer
+    // content the LLM evaluates. Fall back to placeholders only when STT
+    // produced nothing (unsupported browser / silent answer).
+    const spoken = (stoppedTranscriptRef.current || liveTranscriptRef.current || '').trim();
+    const answerText = spoken.length > 0
+      ? spoken
+      : hasVideo
+        ? `Video answer recorded for question ${currentQuestion.questionNumber}`
+        : DEFAULT_SKIPPED_ANSWER;
     const newEntry = {
       questionId: currentQuestion.id,
       questionNumber: currentQuestion.questionNumber,
@@ -303,10 +337,12 @@ const Interview = () => {
     }
 
     resetRecording();
+    stoppedTranscriptRef.current = '';
+    resetTranscript();
 
     const nextIndex = currentQuestionIndex + 1;
     loadQuestion(nextIndex);
-  }, [currentQuestion, currentQuestionIndex, resetRecording, loadQuestion]);
+  }, [currentQuestion, currentQuestionIndex, resetRecording, resetTranscript, liveTranscriptRef, loadQuestion]);
 
   /**
    * Handle skip question
@@ -314,6 +350,9 @@ const Interview = () => {
   const handleSkipQuestion = useCallback(() => {
     if (!currentQuestion) return;
 
+    stoppedTranscriptRef.current = '';
+    stopListening();
+    resetTranscript();
     if (isRecording) {
       stopRecording();
     }
@@ -322,13 +361,14 @@ const Interview = () => {
     setIsAISpeaking(false);
 
     saveAnswerAndProceed(null);
-  }, [currentQuestion, isRecording, stopRecording, saveAnswerAndProceed, stopSpeaking]);
+  }, [currentQuestion, isRecording, stopRecording, saveAnswerAndProceed, stopSpeaking, stopListening, resetTranscript]);
 
   /**
    * Handle end interview early
    */
   const handleEndInterview = useCallback(() => {
-    // Stop any ongoing recording
+    // Stop transcription + any ongoing recording
+    stoppedTranscriptRef.current = stopListening();
     if (isRecording) {
       stopRecording();
     }
@@ -338,7 +378,7 @@ const Interview = () => {
     setIsAISpeaking(false);
 
     completeInterview();
-  }, [isRecording, stopRecording, stopSpeaking, completeInterview]);
+  }, [isRecording, stopRecording, stopSpeaking, completeInterview, stopListening]);
 
   /**
    * Save recorded answer and move to next question
@@ -460,6 +500,24 @@ const Interview = () => {
               />
             </AnimatePresence>
 
+            {/* Live transcription of the user's spoken answer */}
+            {(interviewState === 'recording' || interviewState === 'processing') && (
+              <div className="rounded-2xl border border-white/10 bg-black/30 p-4">
+                <p className="mb-2 text-xs font-semibold uppercase tracking-wider text-gray-400">
+                  {isTranscriptionSupported ? 'Live transcript (sent to AI)' : 'Transcription unavailable'}
+                </p>
+                {isTranscriptionSupported ? (
+                  <p className="min-h-6 text-sm text-gray-200">
+                    {transcript || <span className="text-gray-500">Listening… speak your answer clearly.</span>}
+                  </p>
+                ) : (
+                  <p className="text-sm text-yellow-400">
+                    This browser does not support live transcription (use Chrome/Edge). Your video presence still counts, but detailed AI feedback needs transcribed speech.
+                  </p>
+                )}
+              </div>
+            )}
+
             {/* Controls */}
             <div className="flex items-center justify-between">
               <div className="flex gap-3">
@@ -507,8 +565,12 @@ const Interview = () => {
           </div>
         );
 
-      case 'completed':
-        const answeredCount = collectedAnswers.filter(a => a.videoBlob && a.videoBlob.size > MIN_BYTES).length;
+      case 'completed': {
+        const answeredCount = collectedAnswers.filter(a => {
+          const t = (a.answerText || '').trim();
+          const hasRealTranscript = t.length > 0 && !t.startsWith('Video answer recorded for question') && t !== DEFAULT_SKIPPED_ANSWER;
+          return hasRealTranscript || (!!a.videoBlob && a.videoBlob.size > MIN_BYTES);
+        }).length;
         const skippedCount = collectedAnswers.length - answeredCount;
 
         return (
@@ -567,6 +629,7 @@ const Interview = () => {
             )}
           </motion.div>
         );
+      }
 
       case 'error':
         return (
